@@ -4,6 +4,83 @@
 
 When you're running a 3B-parameter model on an edge device, you need to know exactly where it fails. Baby-llm-nanny sends a curated bank of test prompts to your local Ollama models and automatically evaluates the responses against known-correct answers — catching hallucinations, bad math, logic errors, and instruction-following failures.
 
+## 🔬 Live Code Review (v0.3.0)
+
+The **live code review module** implements an iterative generate→test→feedback→regenerate loop — exactly what a human reviewer would do in a hackathon:
+
+1. Sends a coding prompt to the local LLM
+2. Extracts the generated code
+3. Runs it against test cases in an isolated subprocess
+4. If tests fail, constructs specific feedback ("Test 2: got False, expected True") and re-queries the model
+5. Repeats until all tests pass or `--max-iterations` is reached
+
+This gets the absolute best out of small local models by catching their mistakes and giving them a chance to self-correct.
+
+```bash
+# Review all built-in coding prompts (9 prompts, up to 3 iterations each)
+baby-llm-nanny qwen2.5:3b --review
+
+# Review with 5 iterations max
+baby-llm-nanny qwen2.5:3b --review --max-iterations 5
+
+# Review a custom prompt with your own test cases
+baby-llm-nanny qwen2.5:3b \
+  --review-prompt "Write a Python function called square that takes n and returns n*n. Return only the code." \
+  --review-tests-file my_tests.py \
+  --max-iterations 3
+
+# Save review results as JSON
+baby-llm-nanny qwen2.5:3b --review --review-json reviews/qwen_review.json
+```
+
+### Custom test files
+
+Create a `.py` file with `test_cases`, `function_name`, and optionally `code_pattern`:
+
+```python
+# my_tests.py
+function_name = "square"
+code_pattern = r"def\s+square\s*\([^)]*\)\s*:.*?(?=\ndef\s|\Z)"
+test_cases = [
+    ({"n": 2}, 4),
+    ({"n": 3}, 9),
+    ({"n": 0}, 0),
+    ({"n": -4}, 16),
+]
+```
+
+### Sample review output
+
+```
+🔬 Live Code Review Report — qwen2.5:3b
+  Prompts reviewed: 9
+  Final pass rate:  5/9
+  Self-corrected:   0 (went from failing → passing)
+
+  ✅ coding-is-even [1 iterations]
+     Score progression: 100%
+     Iteration 1: ✅ 100% — All 5 tests passed
+
+  ❌ coding-fizzbuzz [3 iterations]
+     Score progression: 0% → 0% → 0%
+     Iteration 1: ❌ 0% — Error: can't multiply sequence by non-int of type 'str'
+     Iteration 2: ❌ 0% — Error: can't multiply sequence by non-int of type 'str'
+     Iteration 3: ❌ 0% — Error: can't multiply sequence by non-int of type 'str'
+
+  SUMMARY
+  First-try pass:   5/9 (56%)
+  After review:    5/9 (56%)
+```
+
+### What the review loop reveals
+
+Testing Qwen 2.5 3B reveals that:
+- **Simple functions** (is_even, factorial, reverse_string, palindrome, count_vowels) pass on first try
+- **FizzBuzz** — the model tries to multiply strings (`"Fizz" * (i % 3 == 0)`) instead of using if/elif
+- **Parameter naming** — the model generates `max_of_list(arr)` instead of `max_of_list(lst)`, ignoring the parameter name in the prompt
+- **Complex algorithms** (binary search, merge sorted) — the 3B model can't generate correct implementations even with feedback
+- The feedback loop correctly identifies and reports each error, but the 3B model often repeats the same mistake — valuable information for hackathon mentors
+
 ## What it tests
 
 | Category | What it probes | # Prompts |
@@ -36,6 +113,9 @@ ollama serve &
 # Run full evaluation against qwen2.5:3b
 baby-llm-nanny qwen2.5:3b
 
+# Live code review (generate→test→fix loop)
+baby-llm-nanny qwen2.5:3b --review --max-iterations 3
+
 # Run specific categories
 baby-llm-nanny qwen2.5:3b --categories math,hallucination
 
@@ -65,27 +145,29 @@ baby-llm-nanny --list-models
 baby-llm-nanny --list-prompts
 ```
 
-## v0.2.0 — 10 new improvements
+## v0.3.0 — Live Code Review
 
-1. **Multi-model comparison** (`--compare m1,m2,m3`): Side-by-side table comparing pass rates, scores, token speed, and category breakdowns across models.
+New module: `baby_llm_nanny/reviewer.py` — iterative code review loop.
 
-2. **Token efficiency metrics**: Reports tokens/second from the Ollama API, plus total tokens consumed. Visible in terminal, JSON, CSV, and HTML reports.
+- **`--review`**: Run all coding prompts through the generate→test→fix loop
+- **`--review-prompt TEXT`**: Review a custom coding prompt (bypasses prompt bank)
+- **`--review-tests-file F`**: Load test cases from a `.py` file
+- **`--max-iterations N`**: Max fix attempts (default: 3)
+- **`--review-json PATH`**: Save review results as JSON
+- Reports show score progression per iteration, self-correction detection, and first-try vs after-review pass rates
 
-3. **Difficulty ratings**: Every prompt is tagged easy, medium, or hard. Reports include a difficulty breakdown showing where the model struggles most.
+## v0.2.0 — 10 improvements
 
-4. **CSV export** (`--csv path`): Spreadsheet-friendly output with one row per prompt, including all metrics.
-
-5. **20 new prompts**: Harder math (compound interest, set theory), Tribonacci series, Knights & Knaves logic, Monty Hall, binary search, merge sorted lists, adversarial hallucination traps (fake medication, fake paper in real journal, modified famous quote), multi-constraint instruction following.
-
-6. **Color-coded terminal output**: ANSI green/yellow/red for scores and status indicators. Disable with `--no-color`.
-
-7. **Historical trend tracking** (`--save-history`, `--history`): SQLite database stores each run. View trends over time and detect regressions vs the previous run.
-
-8. **Retry/consistency analysis** (`--retries N`): Runs each prompt N times with different seeds. Reports when a model gives inconsistent answers across retries.
-
-9. **Hallucination confidence scoring**: For hallucination-category prompts, estimates how confidently the model fabricates (0.0 = admitted ignorance, 0.3 = brief fabrication, 0.9 = elaborate fabrication). Based on response length as a proxy.
-
-10. **HTML report export** (`--html path`): Self-contained HTML file with styled tables, color-coded scores, and full per-prompt details.
+1. **Multi-model comparison** (`--compare m1,m2,m3`): Side-by-side table.
+2. **Token efficiency metrics**: Tokens/sec from Ollama API.
+3. **Difficulty ratings**: Easy/medium/hard on all prompts.
+4. **CSV export** (`--csv path`): Spreadsheet-friendly output.
+5. **20 new prompts**: Compound interest, Tribonacci, Knights & Knaves, Monty Hall, binary search, etc.
+6. **Color-coded terminal output**: ANSI green/yellow/red.
+7. **Historical trend tracking** (`--save-history`, `--history`): SQLite DB.
+8. **Retry/consistency analysis** (`--retries N`): Per-prompt variance.
+9. **Hallucination confidence scoring**: Response length as fabrication proxy.
+10. **HTML report export** (`--html path`): Self-contained styled file.
 
 ## How it works
 
@@ -99,11 +181,13 @@ baby-llm-nanny --list-prompts
    - `numeric` — extracts and compares numbers with optional tolerance
    - `json_keys` — parses JSON (even from markdown fences) and checks key-value pairs
    - `code_exec` — extracts Python code, executes it in a subprocess, runs test cases
-   - `multi_constraint` — checks multiple constraints simultaneously (word count, starting word, etc.)
+   - `multi_constraint` — checks multiple constraints simultaneously
 
-4. **Report** (`report.py`): Terminal output with color, JSON/CSV/HTML export, multi-model comparison table.
+4. **Reviewer** (`reviewer.py`): Live code review loop — generate→test→feedback→regenerate. Constructs specific actionable feedback from test failures and re-queries the model.
 
-5. **History** (`history.py`): SQLite database for storing runs over time and detecting regressions.
+5. **Report** (`report.py`): Terminal output with color, JSON/CSV/HTML export, multi-model comparison table.
+
+6. **History** (`history.py`): SQLite database for storing runs over time and detecting regressions.
 
 ## System prompts
 
@@ -120,9 +204,10 @@ baby-llm-nanny --list-prompts
 baby-llm-nanny/
 ├── baby_llm_nanny/
 │   ├── __init__.py
-│   ├── cli.py            # CLI entry point with all new flags
+│   ├── cli.py            # CLI entry point with all flags
 │   ├── runner.py         # Ollama HTTP client + token efficiency
 │   ├── evaluator.py      # 6 evaluation strategies + hallucination scoring
+│   ├── reviewer.py       # Live code review loop (generate→test→fix)
 │   ├── report.py         # Terminal + JSON + CSV + HTML + comparison
 │   ├── history.py        # SQLite trend tracking + retry analysis
 │   └── prompts/
@@ -132,7 +217,8 @@ baby-llm-nanny/
 │   ├── test_evaluator_and_prompts.py   # 80+ unit tests
 │   ├── test_runner.py                  # 9 integration tests (needs Ollama)
 │   ├── test_report.py                  # 20+ report/export tests
-│   └── test_history.py                  # 10+ SQLite tests
+│   ├── test_history.py                 # 10+ SQLite tests
+│   └── test_reviewer.py               # 24 review loop tests
 ├── pyproject.toml
 └── README.md
 ```
@@ -141,7 +227,7 @@ baby-llm-nanny/
 
 ```bash
 # Unit tests (no Ollama needed)
-.venv/bin/python -m pytest tests/test_evaluator_and_prompts.py tests/test_report.py tests/test_history.py -q
+.venv/bin/python -m pytest tests/test_evaluator_and_prompts.py tests/test_report.py tests/test_history.py tests/test_reviewer.py -q
 
 # Integration tests (requires Ollama running)
 .venv/bin/python -m pytest tests/test_runner.py -q

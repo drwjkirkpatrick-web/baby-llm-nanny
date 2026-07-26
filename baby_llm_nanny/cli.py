@@ -24,6 +24,13 @@ Options:
     --list-prompts       List all prompts and exit
     --no-color           Disable ANSI color output
     --version            Show version and exit
+
+Live Code Review:
+    --review              Enable live code review loop (coding prompts only)
+    --max-iterations N    Max generate→test→fix iterations (default: 3)
+    --review-prompt TEXT  Custom coding prompt to review (bypasses prompt bank)
+    --review-tests-file F Path to a .py file with test_cases list and function_name
+    --review-json PATH    Save review results as JSON
 """
 
 from __future__ import annotations
@@ -43,6 +50,10 @@ from .report import (
 from .history import (
     init_db, save_run_to_db, format_trend_report, list_runs,
     save_retry_results, get_retry_stats,
+)
+from .reviewer import (
+    review_code, review_coding_prompts, format_review_report,
+    save_review_json, ReviewResult,
 )
 
 
@@ -121,6 +132,18 @@ def build_argparser() -> argparse.ArgumentParser:
                            help="Save results to SQLite DB for trend tracking")
     adv_group.add_argument("--history", action="store_true",
                            help="Show historical trend report and exit")
+
+    review_group = parser.add_argument_group("live code review")
+    review_group.add_argument("--review", action="store_true",
+                               help="Enable live code review loop (coding prompts only)")
+    review_group.add_argument("--max-iterations", type=int, default=3,
+                              help="Max generate→test→fix iterations (default: 3)")
+    review_group.add_argument("--review-prompt", default=None,
+                              help="Custom coding prompt to review (bypasses prompt bank)")
+    review_group.add_argument("--review-tests-file", default=None,
+                              help="Path to .py file with test_cases and function_name")
+    review_group.add_argument("--review-json", default=None,
+                              help="Save review results as JSON")
 
     info_group = parser.add_argument_group("info")
     info_group.add_argument("--list-models", action="store_true", help="List available models")
@@ -282,7 +305,81 @@ def main(argv: Optional[list[str]] = None) -> int:
     system_prompt = SYSTEM_PROMPTS.get(args.system_prompt, None)
     sp_name = args.system_prompt if system_prompt else "none"
 
+    # ──────────────────────────────────────────────────────────────
+    # Live Code Review mode
+    # ──────────────────────────────────────────────────────────────
+    if args.review or args.review_prompt:
+        from .reviewer import review_code, review_coding_prompts, format_review_report, save_review_json
+
+        print(f"🍼 baby-llm-nanny v{__version__} — 🔬 Live Code Review")
+        print(f"   Model:          {args.model}")
+        print(f"   Max iterations: {args.max_iterations}")
+        print(f"   Temperature:    {args.temperature}")
+        print()
+
+        review_results = []
+
+        if args.review_prompt:
+            # Custom single-prompt review mode
+            # Load tests from file if provided, otherwise run without tests (just execute)
+            function_name = "solution"
+            test_cases = []
+            code_pattern = ""
+
+            if args.review_tests_file:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("tests_module", args.review_tests_file)
+                tests_mod = importlib.util.module_from_spec(spec)
+                try:
+                    spec.loader.exec_module(tests_mod)
+                    test_cases = getattr(tests_mod, "test_cases", [])
+                    function_name = getattr(tests_mod, "function_name", "solution")
+                    code_pattern = getattr(tests_mod, "code_pattern", "")
+                except Exception as e:
+                    print(f"❌ Could not load tests file: {e}")
+                    return 1
+
+            rr = review_code(
+                model=args.model,
+                prompt=args.review_prompt,
+                function_name=function_name,
+                test_cases=test_cases,
+                code_pattern=code_pattern,
+                prompt_id="custom",
+                host=args.host, port=args.port, timeout=args.timeout,
+                temperature=args.temperature, seed=args.seed,
+                max_iterations=args.max_iterations,
+                show_progress=True,
+            )
+            review_results.append(rr)
+        else:
+            # Review all coding prompts from the prompt bank
+            coding_prompts = get_prompts_by_category("coding")
+            if not coding_prompts:
+                print("No coding prompts found.")
+                return 1
+            print(f"   Reviewing {len(coding_prompts)} coding prompts...\n")
+            review_results = review_coding_prompts(
+                args.model, coding_prompts,
+                host=args.host, port=args.port, timeout=args.timeout,
+                temperature=args.temperature, seed=args.seed,
+                max_iterations=args.max_iterations,
+                show_progress=True,
+            )
+
+        # Print review report
+        print(format_review_report(review_results, args.model))
+
+        # Save review JSON
+        if args.review_json:
+            path = save_review_json(review_results, args.model, args.review_json)
+            print(f"Review JSON saved to: {path}")
+
+        return 0
+
+    # ──────────────────────────────────────────────────────────────
     # Multi-model comparison mode
+    # ──────────────────────────────────────────────────────────────
     if args.compare:
         models = [m.strip() for m in args.compare.split(",")]
         reports = []
