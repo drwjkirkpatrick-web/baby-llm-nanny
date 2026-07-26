@@ -340,6 +340,114 @@ def eval_code_exec(response: str, expected: dict) -> EvalResult:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Multi-constraint evaluation
+# ─────────────────────────────────────────────────────────────────────
+
+def eval_multi_constraint(response: str, expected: str) -> EvalResult:
+    """Evaluate responses against custom multi-constraint rules.
+
+    Expected is a special string key indicating which constraints to check:
+      - "starts_with_The_and_7_words": must start with 'The', have 7 words, end with '.'
+      - "exactly_3_words": must have exactly 3 words
+    """
+    resp = response.strip()
+    constraints_passed = 0
+    constraints_total = 0
+    details = []
+
+    if expected == "starts_with_The_and_7_words":
+        # Constraint 1: starts with 'The'
+        constraints_total += 1
+        if resp.startswith("The "):
+            constraints_passed += 1
+        else:
+            details.append(f"Does not start with 'The' (starts with '{resp[:20]}')")
+
+        # Constraint 2: exactly 7 words
+        constraints_total += 1
+        words = resp.split()
+        if len(words) == 7:
+            constraints_passed += 1
+        else:
+            details.append(f"Has {len(words)} words, expected 7")
+
+        # Constraint 3: ends with period
+        constraints_total += 1
+        if resp.endswith("."):
+            constraints_passed += 1
+        else:
+            details.append("Does not end with period")
+
+    elif expected == "exactly_3_words":
+        constraints_total += 1
+        words = resp.split()
+        if len(words) == 3:
+            constraints_passed += 1
+        else:
+            details.append(f"Has {len(words)} words, expected 3")
+    else:
+        return EvalResult(passed=False, score=0.0,
+                          detail=f"Unknown multi-constraint key: {expected}")
+
+    score = constraints_passed / constraints_total if constraints_total else 0.0
+    passed = score == 1.0
+    detail = f"{constraints_passed}/{constraints_total} constraints met"
+    if details:
+        detail += ". " + "; ".join(details)
+
+    return EvalResult(passed=passed, score=score, detail=detail, extracted=resp)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Hallucination confidence scoring
+# ─────────────────────────────────────────────────────────────────────
+
+def hallucination_confidence(response: str, category: str) -> float:
+    """Estimate how confidently a model hallucinates.
+
+    Returns a float 0.0–1.0 where higher = more confident fabrication.
+
+    Heuristic: for hallucination-category prompts, if the model gives a long,
+    confident answer instead of admitting ignorance, longer = more confident
+    fabrication. For non-hallucination categories, returns 0.0.
+
+    This is a proxy metric — response length correlates with confident
+    fabrication in small models. A model that says "I don't know" is brief;
+    a model that fabricates tends to elaborate.
+    """
+    if category != "hallucination":
+        return 0.0
+
+    resp = response.strip()
+    if not resp:
+        return 0.0
+
+    # Check if the model admitted ignorance (good behavior)
+    ignorance_phrases = [
+        "i don't know", "don't know", "not familiar", "no information",
+        "cannot", "not aware", "don't have", "doesn't exist",
+        "not real", "fictional", "no record", "no such",
+    ]
+    resp_lower = resp.lower()
+    for phrase in ignorance_phrases:
+        if phrase in resp_lower:
+            return 0.0  # Model correctly admitted ignorance → no fabrication
+
+    # Model didn't admit ignorance → it's fabricating
+    # Use response length as confidence proxy:
+    #   < 50 chars  → 0.3 (brief fabrication)
+    #   50-150 chars → 0.6 (moderate fabrication)
+    #   > 150 chars → 0.9 (elaborate fabrication)
+    length = len(resp)
+    if length < 50:
+        return 0.3
+    elif length < 150:
+        return 0.6
+    else:
+        return 0.9
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Dispatcher
 # ─────────────────────────────────────────────────────────────────────
 
@@ -350,6 +458,7 @@ EVALUATORS = {
     "numeric": lambda resp, exp, **kw: eval_numeric(resp, exp, kw.get("tolerance", 0.0)),
     "json_keys": lambda resp, exp, **kw: eval_json_keys(resp, exp),
     "code_exec": lambda resp, exp, **kw: eval_code_exec(resp, exp),
+    "multi_constraint": lambda resp, exp, **kw: eval_multi_constraint(resp, exp),
 }
 
 

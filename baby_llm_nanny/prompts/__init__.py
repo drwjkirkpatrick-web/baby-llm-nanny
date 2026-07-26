@@ -19,6 +19,6 @@ Categories:
   boundaries     - self-knowledge / calibration
 """
 
-from .prompts import PROMPTS, get_prompts_by_category, list_categories
+from .prompts import PROMPTS, get_prompts_by_category, get_prompts_by_difficulty, list_categories
 
-__all__ = ["PROMPTS", "get_prompts_by_category", "list_categories"]
+__all__ = ["PROMPTS", "get_prompts_by_category", "get_prompts_by_difficulty", "list_categories"]

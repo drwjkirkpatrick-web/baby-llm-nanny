@@ -179,7 +179,7 @@ class TestPromptBank:
             assert p.category in known, f"Unknown category '{p.category}' for prompt {p.id}"
 
     def test_all_checks_valid(self):
-        valid = {"exact", "contains_any", "numeric", "json_keys", "code_exec"}
+        valid = {"exact", "contains_any", "numeric", "json_keys", "code_exec", "multi_constraint"}
         for p in PROMPTS:
             assert p.check in valid, f"Unknown check '{p.check}' for prompt {p.id}"
 
@@ -206,8 +206,8 @@ class TestPromptBank:
         assert get_prompts_by_category("nonexistent") == []
 
     def test_total_prompt_count(self):
-        """We should have at least 40 prompts across all categories."""
-        assert len(PROMPTS) >= 40
+        """We should have at least 60 prompts across all categories."""
+        assert len(PROMPTS) >= 60
 
     def test_coding_prompts_have_test_cases(self):
         coding_prompts = get_prompts_by_category("coding")
@@ -362,3 +362,82 @@ class TestEvaluateDispatcher:
                         expected=0.3, check="numeric", tolerance=0.001)
         r = evaluate("0.3", tp)
         assert r.passed
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# multi_constraint evaluator
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestMultiConstraint:
+    def test_7_words_starts_the_period(self):
+        from baby_llm_nanny.evaluator import eval_multi_constraint
+        r = eval_multi_constraint("The quick brown fox jumps over dog.", "starts_with_The_and_7_words")
+        assert r.passed
+        assert r.score == 1.0
+
+    def test_wrong_word_count(self):
+        from baby_llm_nanny.evaluator import eval_multi_constraint
+        r = eval_multi_constraint("The quick fox jumps.", "starts_with_The_and_7_words")
+        assert not r.passed
+
+    def test_wrong_start(self):
+        from baby_llm_nanny.evaluator import eval_multi_constraint
+        r = eval_multi_constraint("A quick brown fox jumps over the dog.", "starts_with_The_and_7_words")
+        assert not r.passed
+
+    def test_exactly_3_words(self):
+        from baby_llm_nanny.evaluator import eval_multi_constraint
+        r = eval_multi_constraint("one two three", "exactly_3_words")
+        assert r.passed
+
+    def test_wrong_word_count_3(self):
+        from baby_llm_nanny.evaluator import eval_multi_constraint
+        r = eval_multi_constraint("one two three four", "exactly_3_words")
+        assert not r.passed
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Hallucination confidence scoring
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestHallucinationConfidence:
+    def test_admits_ignorance(self):
+        from baby_llm_nanny.evaluator import hallucination_confidence
+        assert hallucination_confidence("I don't know about that.", "hallucination") == 0.0
+
+    def test_brief_fabrication(self):
+        from baby_llm_nanny.evaluator import hallucination_confidence
+        assert hallucination_confidence("It was about a lighthouse.", "hallucination") == 0.3
+
+    def test_elaborate_fabrication(self):
+        from baby_llm_nanny.evaluator import hallucination_confidence
+        long_resp = "The novel is about a keeper who discovers an ancient artifact that grants " \
+                    "immortality but at a terrible cost. The protagonist must choose between " \
+                    "power and humanity in a gripping tale of suspense."
+        assert hallucination_confidence(long_resp, "hallucination") == 0.9
+
+    def test_non_hallucination_category(self):
+        from baby_llm_nanny.evaluator import hallucination_confidence
+        assert hallucination_confidence("Canberra", "factual") == 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Difficulty ratings
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestDifficultyRatings:
+    def test_all_prompts_have_difficulty(self):
+        for p in PROMPTS:
+            assert hasattr(p, 'difficulty')
+            assert p.difficulty in ("easy", "medium", "hard"), \
+                f"Prompt {p.id} has invalid difficulty '{p.difficulty}'"
+
+    def test_difficulty_distribution(self):
+        from baby_llm_nanny.prompts import get_prompts_by_difficulty
+        easy = get_prompts_by_difficulty("easy")
+        medium = get_prompts_by_difficulty("medium")
+        hard = get_prompts_by_difficulty("hard")
+        assert len(easy) > 0, "No easy prompts"
+        assert len(medium) > 0, "No medium prompts"
+        assert len(hard) > 0, "No hard prompts"
+        assert len(easy) + len(medium) + len(hard) == len(PROMPTS)

@@ -33,6 +33,20 @@ class ModelResponse:
     def ok(self) -> bool:
         return self.error is None
 
+    @property
+    def tokens_per_sec(self) -> Optional[float]:
+        """Generation speed in tokens/second. None if eval_count unavailable."""
+        if self.eval_count and self.response_time_sec > 0:
+            return self.eval_count / self.response_time_sec
+        return None
+
+    @property
+    def total_tokens(self) -> Optional[int]:
+        """Total tokens used (prompt + response). None if unavailable."""
+        if self.eval_count is not None and self.prompt_eval_count is not None:
+            return self.eval_count + self.prompt_eval_count
+        return None
+
 
 def _api_url(host: str, port: int, endpoint: str) -> str:
     return f"http://{host}:{port}/api/{endpoint}"

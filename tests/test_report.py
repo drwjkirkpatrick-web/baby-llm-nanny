@@ -8,7 +8,8 @@ import os
 import tempfile
 import pytest
 from baby_llm_nanny.report import (
-    build_results, format_terminal_report, save_json_report,
+    build_results, format_terminal_report, save_json_report, save_csv_report,
+    save_html_report, format_comparison_table,
     RunReport, PromptResult, CategorySummary,
 )
 from baby_llm_nanny.evaluator import EvalResult
@@ -21,7 +22,7 @@ def _make_mock_data():
     prompts = PROMPTS[:5]
     responses = [
         ModelResponse(model="test-model", prompt=p.prompt, response="mock response",
-                      response_time_sec=1.0)
+                      response_time_sec=1.0, eval_count=10, prompt_eval_count=5)
         for p in prompts
     ]
     evaluations = [
@@ -43,7 +44,8 @@ class TestBuildResults:
         )
         assert report.model == "test-model"
         assert report.total_prompts == 5
-        assert report.total_passed == 4  # 4 have score 1.0 or 0.5 → passed=True
+        assert report.total_passed == 3  # 3 have score 1.0
+        assert report.total_partial == 1  # 1 has score 0.5
 
     def test_report_properties(self):
         prompts, responses, evaluations = _make_mock_data()
@@ -123,6 +125,8 @@ class TestSaveJsonReport:
                 data = json.load(f)
             assert "overall_score" in data
             assert "overall_pass_rate" in data
+            assert "difficulty_summaries" in data
+            assert "avg_hallucination_confidence" in data
         finally:
             os.unlink(path)
 
@@ -133,3 +137,85 @@ class TestSaveJsonReport:
             path = os.path.join(tmpdir, "subdir", "report.json")
             save_json_report(report, path)
             assert os.path.exists(path)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CSV export
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestSaveCsvReport:
+    def test_save_csv(self):
+        import csv as csv_mod
+        prompts, responses, evaluations = _make_mock_data()
+        report = build_results("test-model", prompts, responses, evaluations)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            path = f.name
+        try:
+            save_csv_report(report, path)
+            with open(path) as f:
+                reader = csv_mod.reader(f)
+                rows = list(reader)
+            assert len(rows) == 6  # header + 5 prompts
+            assert "prompt_id" in rows[0]
+            assert "difficulty" in rows[0]
+            assert "hallucination_confidence" in rows[0]
+        finally:
+            os.unlink(path)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# HTML export
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestSaveHtmlReport:
+    def test_save_html(self):
+        prompts, responses, evaluations = _make_mock_data()
+        report = build_results("test-model", prompts, responses, evaluations)
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            path = f.name
+        try:
+            save_html_report(report, path)
+            with open(path) as f:
+                content = f.read()
+            assert "<!DOCTYPE html>" in content
+            assert "test-model" in content
+            assert "PER-PROMPT" not in content  # HTML uses different headings
+            assert "baby-llm-nanny" in content
+        finally:
+            os.unlink(path)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Comparison table
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestComparisonTable:
+    def test_comparison_two_models(self):
+        prompts, responses, evaluations = _make_mock_data()
+        report1 = build_results("model-a", prompts, responses, evaluations)
+        report2 = build_results("model-b", prompts, responses, evaluations)
+        text = format_comparison_table([report1, report2])
+        assert "Model Comparison" in text
+        assert "model-a" in text
+        assert "model-b" in text
+
+    def test_comparison_empty(self):
+        text = format_comparison_table([])
+        assert "No reports" in text
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Difficulty summaries in report
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestDifficultySummary:
+    def test_difficulty_summaries_present(self):
+        prompts, responses, evaluations = _make_mock_data()
+        report = build_results("test-model", prompts, responses, evaluations)
+        assert len(report.difficulty_summaries) > 0
+
+    def test_difficulty_in_terminal_report(self):
+        prompts, responses, evaluations = _make_mock_data()
+        report = build_results("test-model", prompts, responses, evaluations)
+        text = format_terminal_report(report)
+        assert "BY DIFFICULTY" in text
