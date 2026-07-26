@@ -144,6 +144,10 @@ def build_argparser() -> argparse.ArgumentParser:
                               help="Path to .py file with test_cases and function_name")
     review_group.add_argument("--review-json", default=None,
                               help="Save review results as JSON")
+    review_group.add_argument("--pi-review", action="store_true",
+                              help="Review Raspberry Pi garage door prompts with GPIO mocking")
+    review_group.add_argument("--autocorrect", action="store_true",
+                              help="Apply curated Pi error database fixes before testing")
 
     info_group = parser.add_argument_group("info")
     info_group.add_argument("--list-models", action="store_true", help="List available models")
@@ -366,6 +370,50 @@ def main(argv: Optional[list[str]] = None) -> int:
                 max_iterations=args.max_iterations,
                 show_progress=True,
             )
+
+        # Print review report
+        print(format_review_report(review_results, args.model))
+
+        # Save review JSON
+        if args.review_json:
+            path = save_review_json(review_results, args.model, args.review_json)
+            print(f"Review JSON saved to: {path}")
+
+        return 0
+
+    # ──────────────────────────────────────────────────────────────
+    # Pi Garage Door Review mode
+    # ──────────────────────────────────────────────────────────────
+    if args.pi_review:
+        from .pi_prompts import PI_PROMPTS
+        from .reviewer import review_code, format_review_report, save_review_json
+
+        print(f"🍼 baby-llm-nanny v{__version__} — 🍓 Pi Garage Door Review")
+        print(f"   Model:          {args.model}")
+        print(f"   Max iterations: {args.max_iterations}")
+        print(f"   Autocorrect:    {'ON' if args.autocorrect else 'OFF'}")
+        print(f"   Pi prompts:     {len(PI_PROMPTS)}")
+        print()
+
+        review_results = []
+        for pp in PI_PROMPTS:
+            print(f"  📋 {pp.id}")
+            rr = review_code(
+                model=args.model,
+                prompt=pp.prompt,
+                function_name=pp.function_name,
+                test_cases=pp.test_cases,
+                code_pattern=pp.code_pattern,
+                prompt_id=pp.id,
+                host=args.host, port=args.port, timeout=args.timeout,
+                temperature=args.temperature, seed=args.seed,
+                max_iterations=args.max_iterations,
+                show_progress=True,
+                use_autocorrect=args.autocorrect,
+                setup_code=pp.setup_code,
+            )
+            review_results.append(rr)
+            print()
 
         # Print review report
         print(format_review_report(review_results, args.model))

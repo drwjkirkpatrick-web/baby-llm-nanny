@@ -156,8 +156,68 @@ def run_code_tests(code: str, function_name: str,
     return results, ""
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Feedback construction
+def run_code_tests_custom(
+    code: str,
+    function_name: str,
+    test_cases: list[tuple],
+    setup_code: str = "",
+    test_runner_template: str = "",
+) -> tuple[list[dict], str]:
+    """Execute code with custom setup (e.g. GPIO mocks) and optional custom test runner.
+
+    Args:
+        code:                 The model's generated code.
+        function_name:        Name of the function/class to test.
+        test_cases:           List of (args_dict, expected_result) tuples.
+        setup_code:           Python code to run before the model's code
+                              (e.g. mocking gpiozero, RPi.GPIO).
+        test_runner_template: If provided, this is the full test runner code.
+                              It should reference the function/class and print
+                              JSON results. If empty, uses the standard runner.
+
+    Returns (results_list, stderr_text).
+    """
+    if test_runner_template:
+        # Custom test runner — build the full script
+        test_script = setup_code + "\n" + code + "\n\n" + test_runner_template
+    else:
+        # Standard test runner with setup code prepended
+        test_script = setup_code + "\n" + code + "\n\n"
+        test_script += "# --- Auto-generated tests ---\n"
+        test_script += "import json\n"
+        test_script += "results = []\n"
+        for args, exp in test_cases:
+            args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+            test_script += "try:\n"
+            test_script += f"    _result = {function_name}({args_str})\n"
+            test_script += f"    _expected = {repr(exp)}\n"
+            test_script += f"    _pass = _result == _expected\n"
+            test_script += "    results.append({'pass': _pass, 'result': repr(_result), 'expected': repr(_expected)})\n"
+            test_script += "except Exception as _e:\n"
+            test_script += "    results.append({'pass': False, 'error': str(_e)})\n"
+        test_script += "print(json.dumps(results))\n"
+
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", test_script],
+            capture_output=True, text=True, timeout=10,
+            cwd="/tmp",
+        )
+    except subprocess.TimeoutExpired:
+        return [], "Code execution timed out (10s)"
+    except Exception as e:
+        return [], f"Failed to execute code: {e}"
+
+    if proc.returncode != 0:
+        stderr = proc.stderr[:1000] if proc.stderr else "(no stderr)"
+        return [], stderr
+
+    try:
+        results = json.loads(proc.stdout.strip())
+    except json.JSONDecodeError:
+        return [], f"Could not parse test output: '{proc.stdout[:200]}'"
+
+    return results, ""
 # ─────────────────────────────────────────────────────────────────────
 
 def build_feedback_prompt(original_prompt: str, code: str, results: list[dict],
@@ -223,6 +283,9 @@ def review_code(
     seed: int = 42,
     max_iterations: int = 3,
     show_progress: bool = True,
+    use_autocorrect: bool = False,
+    setup_code: str = "",
+    test_runner_template: str = "",
 ) -> ReviewResult:
     """Run the live code review loop for a single coding prompt.
 
@@ -239,6 +302,9 @@ def review_code(
         seed:           Random seed.
         max_iterations: Maximum number of generate→test→fix iterations.
         show_progress:  Print progress to stdout.
+        use_autocorrect: If True, apply Pi error database fixes before testing.
+        setup_code:     Code injected before the model's code (e.g. GPIO mocks).
+        test_runner_template: Custom test runner code (for complex Pi test setups).
 
     Returns:
         ReviewResult with all iterations and final outcome.
@@ -280,8 +346,23 @@ def review_code(
         # Extract code
         code = extract_code(resp.response, code_pattern)
 
-        # Run tests
-        test_results, stderr = run_code_tests(code, function_name, test_cases)
+        # Apply autocorrect if enabled
+        autocorrect_fixes = []
+        if use_autocorrect:
+            from .error_db import apply_autocorrect
+            code, autocorrect_fixes = apply_autocorrect(code)
+            if autocorrect_fixes and show_progress:
+                fix_names = [f["id"] for f in autocorrect_fixes if f["fixable"]]
+                if fix_names:
+                    print(f" 🔧 fixed: {', '.join(fix_names)}", end="")
+
+        # Run tests — use custom test runner if provided, else standard
+        if setup_code or test_runner_template:
+            test_results, stderr = run_code_tests_custom(
+                code, function_name, test_cases, setup_code, test_runner_template
+            )
+        else:
+            test_results, stderr = run_code_tests(code, function_name, test_cases)
 
         if test_results:
             passed_count = sum(1 for r in test_results if r.get("pass"))
@@ -363,12 +444,14 @@ def review_coding_prompts(
     seed: int = 42,
     max_iterations: int = 3,
     show_progress: bool = True,
+    use_autocorrect: bool = False,
 ) -> list[ReviewResult]:
     """Run the live code review loop for all coding-category prompts.
 
     Args:
         prompts: List of TestPrompt objects (should be coding category).
         Other args: same as review_code.
+        use_autocorrect: If True, apply Pi error database fixes before testing.
 
     Returns:
         List of ReviewResult objects, one per prompt.
@@ -392,6 +475,7 @@ def review_coding_prompts(
             temperature=temperature, seed=seed,
             max_iterations=max_iterations,
             show_progress=show_progress,
+            use_autocorrect=use_autocorrect,
         )
         results.append(rr)
     return results

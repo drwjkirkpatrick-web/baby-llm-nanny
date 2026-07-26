@@ -145,7 +145,58 @@ baby-llm-nanny --list-models
 baby-llm-nanny --list-prompts
 ```
 
-## v0.3.0 — Live Code Review
+## v0.4.0 — Pi Garage Door Error Database & Autocorrect
+
+New modules: `baby_llm_nanny/pi_prompts.py` (12 Pi/garage door coding prompts with GPIO mocking), `baby_llm_nanny/error_db.py` (curated error database with 10 error patterns and auto-fixes).
+
+### Pi Garage Door Prompts (`--pi-review`)
+
+12 Raspberry Pi garage door simulation prompts covering:
+- State machine logic (CLOSED→OPENING→OPEN→CLOSING→CLOSED)
+- GPIO motor relay control (forward/backward/stop)
+- Limit switch reading and sensor debouncing
+- Safety timeout (auto-stop motor after N seconds)
+- Obstacle detection (reverse on contact while closing)
+- Button toggle handling
+- Timed auto-close
+- Safe shutdown with exception handling
+- Full garage controller integration
+
+All prompts include mocked `gpiozero` and `RPi.GPIO` environments so code runs headless without real Pi hardware.
+
+### Curated Error Database (`--autocorrect`)
+
+Built from real Qwen 2.5 3B outputs. 10 error patterns detected and auto-fixed:
+
+| Error ID | What it detects | Auto-fix |
+|---|---|---|
+| `gpiozero-import` | `from gpiozero import LED` in mock env | Removes import (mock already injected) |
+| `rpi-gpio-import` | `import RPi.GPIO` in mock env | Removes import |
+| `motor-return-none` | `return motor.forward()` returns None | Split into `motor.forward(); return True` |
+| `return-is-not-none` | `return X.method() is not None` | Same fix as above |
+| `truncated-code` | Code cut off mid-function | Flagged (requires re-generation) |
+| `close-vs-closing` | `'CLOSE'` instead of `'CLOSING'` | String replacement |
+| `prose-after-code` | Explanation text mixed into code | Strips non-Python lines |
+| `debug-print` | `print()` debug statements | Removes print lines |
+| `duplicate-time-import` | Redundant `import time` | Removes duplicate |
+| `state-skip` | Jumps OPENING→OPEN in one call | Removes premature final-state assignment |
+
+```bash
+# Run Pi garage door review with autocorrect
+baby-llm-nanny qwen2.5:3b --pi-review --autocorrect --max-iterations 3
+
+# Save results
+baby-llm-nanny qwen2.5:3b --pi-review --autocorrect --review-json pi_review.json
+```
+
+### What the Pi review reveals about Qwen 2.5 3B
+
+- **Simple functions pass**: limit switches, obstacle detection, auto-close check
+- **Parameter naming**: model generates wrong parameter names (e.g. `max_of_list(arr)` instead of `max_of_list(lst)`)
+- **gpiozero imports**: model includes `from gpiozero import LED` even when mock env is provided — autocorrect removes these
+- **Debug prints**: model adds `print("Garage door opening...")` — autocorrect strips these
+- **State transitions**: model skips intermediate states (OPENING→OPEN in one call) — autocorrect detects this
+- **Return values**: model returns `motor.forward() is not None` instead of `True` — autocorrect fixes this
 
 New module: `baby_llm_nanny/reviewer.py` — iterative code review loop.
 
@@ -208,6 +259,8 @@ baby-llm-nanny/
 │   ├── runner.py         # Ollama HTTP client + token efficiency
 │   ├── evaluator.py      # 6 evaluation strategies + hallucination scoring
 │   ├── reviewer.py       # Live code review loop (generate→test→fix)
+│   ├── error_db.py       # Curated Pi error database + autocorrect (10 patterns)
+│   ├── pi_prompts.py     # 12 Raspberry Pi garage door prompts with GPIO mocking
 │   ├── report.py         # Terminal + JSON + CSV + HTML + comparison
 │   ├── history.py        # SQLite trend tracking + retry analysis
 │   └── prompts/
@@ -218,7 +271,8 @@ baby-llm-nanny/
 │   ├── test_runner.py                  # 9 integration tests (needs Ollama)
 │   ├── test_report.py                  # 20+ report/export tests
 │   ├── test_history.py                 # 10+ SQLite tests
-│   └── test_reviewer.py               # 24 review loop tests
+│   ├── test_reviewer.py               # 24 review loop tests
+│   └── test_error_db.py               # 41 error database + Pi prompt tests
 ├── pyproject.toml
 └── README.md
 ```
