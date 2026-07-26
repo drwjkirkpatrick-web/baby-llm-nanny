@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "baby-llm-nanny"
+version = "0.1.0"
+description = "Hallucination and quality screening for small local LLMs on headless Jetson"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Walker Kirkpatrick"}]
+keywords = ["llm", "eval", "hallucination", "ollama", "jetson", "qwen"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = []
+
+[project.scripts]
+baby-llm-nanny = "baby_llm_nanny.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["baby_llm_nanny"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
