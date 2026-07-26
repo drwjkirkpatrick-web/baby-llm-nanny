@@ -83,6 +83,28 @@ SYSTEM_PROMPTS = {
 }
 
 
+# Code-specific system prompt targeting the exact errors Qwen 2.5 3B makes.
+# Built from the curated error database (error_db.py) — each line pre-emptively
+# addresses a failure pattern observed in real model outputs.
+CODE_SYSTEM_PROMPT = (
+    "You are an expert Python programmer. Follow these rules exactly:\n"
+    "1. Use the EXACT parameter names specified in the prompt. If the prompt says "
+    "`max_of_list(lst)`, use `lst` — do not rename it to `arr`, `numbers`, or anything else.\n"
+    "2. When a function should return True or False, return True or False directly — "
+    "never return the result of a method call like `motor.forward()` or "
+    "`motor.forward() is not None`.\n"
+    "3. Do NOT add print() statements unless the prompt explicitly asks for output.\n"
+    "4. Do NOT import modules (gpiozero, RPi.GPIO, time) unless the prompt asks you to. "
+    "The environment already provides what you need.\n"
+    "5. Return ONLY the code — no explanation, no prose, no markdown commentary.\n"
+    "6. For state machines, set the intermediate state (e.g. 'OPENING') and STOP. "
+    "Do not immediately jump to the final state (e.g. 'OPEN') in the same method call.\n"
+    "7. For class constructors, only accept parameters the prompt specifies. "
+    "Do not add extra parameters to __init__.\n"
+    "8. Complete every function — do not leave code incomplete or truncated.\n"
+)
+
+
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="baby-llm-nanny",
@@ -148,6 +170,10 @@ def build_argparser() -> argparse.ArgumentParser:
                               help="Review Raspberry Pi garage door prompts with GPIO mocking")
     review_group.add_argument("--autocorrect", action="store_true",
                               help="Apply curated Pi error database fixes before testing")
+    review_group.add_argument("--code-prompt", action="store_true",
+                              help="Use code-specific system prompt that pre-emptively targets "
+                                   "common Qwen 2.5 3B coding errors (wrong param names, debug "
+                                   "prints, imports, return values, state skips)")
 
     info_group = parser.add_argument_group("info")
     info_group.add_argument("--list-models", action="store_true", help="List available models")
@@ -315,10 +341,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.review or args.review_prompt:
         from .reviewer import review_code, review_coding_prompts, format_review_report, save_review_json
 
+        # Determine which system prompt to use
+        code_sp = CODE_SYSTEM_PROMPT if args.code_prompt else None
+        sp_label = "code-expert" if args.code_prompt else "none"
+
         print(f"🍼 baby-llm-nanny v{__version__} — 🔬 Live Code Review")
         print(f"   Model:          {args.model}")
         print(f"   Max iterations: {args.max_iterations}")
         print(f"   Temperature:    {args.temperature}")
+        print(f"   System prompt:  {sp_label}")
+        if args.autocorrect:
+            print(f"   Autocorrect:    ON")
         print()
 
         review_results = []
@@ -354,6 +387,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 temperature=args.temperature, seed=args.seed,
                 max_iterations=args.max_iterations,
                 show_progress=True,
+                use_autocorrect=args.autocorrect,
+                system_prompt=code_sp,
             )
             review_results.append(rr)
         else:
@@ -369,6 +404,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 temperature=args.temperature, seed=args.seed,
                 max_iterations=args.max_iterations,
                 show_progress=True,
+                use_autocorrect=args.autocorrect,
+                system_prompt=code_sp,
             )
 
         # Print review report
@@ -388,10 +425,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .pi_prompts import PI_PROMPTS
         from .reviewer import review_code, format_review_report, save_review_json
 
+        code_sp = CODE_SYSTEM_PROMPT if args.code_prompt else None
+        sp_label = "code-expert" if args.code_prompt else "none"
+
         print(f"🍼 baby-llm-nanny v{__version__} — 🍓 Pi Garage Door Review")
         print(f"   Model:          {args.model}")
         print(f"   Max iterations: {args.max_iterations}")
         print(f"   Autocorrect:    {'ON' if args.autocorrect else 'OFF'}")
+        print(f"   System prompt:  {sp_label}")
         print(f"   Pi prompts:     {len(PI_PROMPTS)}")
         print()
 
@@ -411,6 +452,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 show_progress=True,
                 use_autocorrect=args.autocorrect,
                 setup_code=pp.setup_code,
+                system_prompt=code_sp,
             )
             review_results.append(rr)
             print()

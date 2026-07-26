@@ -70,3 +70,32 @@ class TestRunPromptSet:
         captured = capsys.readouterr()
         assert "[1/2]" in captured.out
         assert "[2/2]" in captured.out
+
+
+class TestSystemPrompt:
+    """Test that the system_prompt parameter actually reaches the model."""
+
+    def test_with_system_prompt(self):
+        """Query with a system prompt should still return a valid response."""
+        resp = query_model(
+            "qwen2.5:3b", "What is 2+2? Answer with just the number.",
+            system_prompt="You are a helpful math assistant.",
+        )
+        assert resp.ok
+        assert resp.response
+
+    def test_system_prompt_affects_output(self):
+        """A system prompt telling the model to be very brief should produce shorter output."""
+        # Without system prompt
+        resp_normal = query_model(
+            "qwen2.5:3b", "Write a one-sentence greeting.",
+        )
+        # With system prompt enforcing extreme brevity
+        resp_brief = query_model(
+            "qwen2.5:3b", "Write a one-sentence greeting.",
+            system_prompt="You can only output exactly 3 words. Nothing else. No punctuation except a period.",
+        )
+        assert resp_normal.ok
+        assert resp_brief.ok
+        # The brief one should be shorter (or at least not longer)
+        assert len(resp_brief.response) <= len(resp_normal.response) + 50

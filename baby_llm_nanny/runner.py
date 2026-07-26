@@ -88,6 +88,7 @@ def query_model(
     temperature: float = 0.0,
     seed: int = 42,
     num_ctx: int = 4096,
+    system_prompt: str | None = None,
 ) -> ModelResponse:
     """Send a prompt to an Ollama model and return the response.
 
@@ -95,14 +96,16 @@ def query_model(
     deterministic outputs to compare across runs.
 
     Args:
-        model:      Model name (e.g. "qwen2.5:3b").
-        prompt:      The prompt text.
-        host:        Ollama server hostname.
-        port:        Ollama server port.
-        timeout:     Request timeout in seconds.
-        temperature: 0.0 for deterministic output.
-        seed:        Fixed seed for reproducibility.
-        num_ctx:     Context window size in tokens.
+        model:        Model name (e.g. "qwen2.5:3b").
+        prompt:       The prompt text.
+        host:         Ollama server hostname.
+        port:         Ollama server port.
+        timeout:      Request timeout in seconds.
+        temperature:  0.0 for deterministic output.
+        seed:         Fixed seed for reproducibility.
+        num_ctx:      Context window size in tokens.
+        system_prompt: Optional system prompt sent via Ollama's `system` field.
+                       When provided, primes the model before the user prompt.
 
     Returns:
         ModelResponse with the model's reply and timing info.
@@ -118,6 +121,8 @@ def query_model(
             "num_ctx": num_ctx,
         },
     }
+    if system_prompt:
+        payload["system"] = system_prompt
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}

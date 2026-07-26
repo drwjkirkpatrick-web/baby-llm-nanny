@@ -1,3 +1,3 @@
 """baby-llm-nanny: Hallucination and quality screening for small local LLMs."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"

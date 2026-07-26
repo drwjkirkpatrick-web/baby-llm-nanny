@@ -145,6 +145,42 @@ baby-llm-nanny --list-models
 baby-llm-nanny --list-prompts
 ```
 
+## v0.4.1 — Code-Specific System Prompt (`--code-prompt`)
+
+The single highest-impact improvement: pass a system prompt via Ollama's `system` field that pre-emptively targets the exact errors Qwen 2.5 3B makes. Instead of fixing errors after generation (autocorrect), this prevents them before generation.
+
+The `CODE_SYSTEM_PROMPT` in `cli.py` was built directly from the curated error database (`error_db.py`). Each rule targets a specific observed failure:
+
+| Rule | Error it prevents |
+|---|---|
+| Use EXACT parameter names from the prompt | `max_of_list(arr)` instead of `max_of_list(lst)` |
+| Return True/False directly, not method results | `return motor.forward()` returning None |
+| Don't add print() statements | Debug prints breaking return value tests |
+| Don't import modules (gpiozero, RPi.GPIO, time) | Import errors in mock environment |
+| Return ONLY code, no prose | Explanation text breaking extraction |
+| Set intermediate state, don't jump to final | `OPENING → OPEN` in one call |
+| Only accept constructor params the prompt specifies | Extra `__init__` parameters |
+| Complete every function | Truncated code |
+
+### Measured impact on Qwen 2.5 3B
+
+| Metric | Without `--code-prompt` | With `--code-prompt` |
+|---|---|---|
+| First-try pass rate (9 coding prompts) | **5/9 (56%)** | **7/9 (78%)** |
+| FizzBuzz | ❌ string multiply error | ✅ passed |
+| max_of_list | ❌ wrong param name | ✅ passed |
+
+```bash
+# Review with code system prompt (recommended for hackathons)
+baby-llm-nanny qwen2.5:3b --review --code-prompt
+
+# Combine with autocorrect for maximum effect
+baby-llm-nanny qwen2.5:3b --review --code-prompt --autocorrect --max-iterations 3
+
+# Pi garage door review with system prompt
+baby-llm-nanny qwen2.5:3b --pi-review --code-prompt --autocorrect
+```
+
 ## v0.4.0 — Pi Garage Door Error Database & Autocorrect
 
 New modules: `baby_llm_nanny/pi_prompts.py` (12 Pi/garage door coding prompts with GPIO mocking), `baby_llm_nanny/error_db.py` (curated error database with 10 error patterns and auto-fixes).

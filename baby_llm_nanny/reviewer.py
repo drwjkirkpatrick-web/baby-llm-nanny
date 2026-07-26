@@ -286,6 +286,7 @@ def review_code(
     use_autocorrect: bool = False,
     setup_code: str = "",
     test_runner_template: str = "",
+    system_prompt: str | None = None,
 ) -> ReviewResult:
     """Run the live code review loop for a single coding prompt.
 
@@ -305,6 +306,8 @@ def review_code(
         use_autocorrect: If True, apply Pi error database fixes before testing.
         setup_code:     Code injected before the model's code (e.g. GPIO mocks).
         test_runner_template: Custom test runner code (for complex Pi test setups).
+        system_prompt:  System prompt sent via Ollama's `system` field to prime
+                        the model before each generation (including feedback retries).
 
     Returns:
         ReviewResult with all iterations and final outcome.
@@ -327,6 +330,7 @@ def review_code(
             model, current_prompt,
             host=host, port=port, timeout=timeout,
             temperature=temperature, seed=seed + iteration - 1,  # vary seed per iteration
+            system_prompt=system_prompt,
         )
 
         if resp.error:
@@ -445,6 +449,7 @@ def review_coding_prompts(
     max_iterations: int = 3,
     show_progress: bool = True,
     use_autocorrect: bool = False,
+    system_prompt: str | None = None,
 ) -> list[ReviewResult]:
     """Run the live code review loop for all coding-category prompts.
 
@@ -476,6 +481,7 @@ def review_coding_prompts(
             max_iterations=max_iterations,
             show_progress=show_progress,
             use_autocorrect=use_autocorrect,
+            system_prompt=system_prompt,
         )
         results.append(rr)
     return results
